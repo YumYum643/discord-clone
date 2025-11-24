@@ -12,15 +12,26 @@ export default function AuthForms({ onLogin }) {
         setError('');
 
         const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+        console.log("Attempting login with API_URL:", API_URL); // Debug log
+
         const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
         const body = isLogin ? { email, password } : { email, password, username };
 
         try {
+            console.log("Fetching:", `${API_URL}${endpoint}`);
             const response = await fetch(`${API_URL}${endpoint}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
+
+            console.log("Response status:", response.status);
+            const contentType = response.headers.get("content-type");
+            if (contentType && contentType.indexOf("application/json") === -1) {
+                const text = await response.text();
+                console.error("Received non-JSON response:", text.substring(0, 100));
+                throw new Error("Server returned HTML instead of JSON. Check API_URL.");
+            }
 
             const data = await response.json();
 
