@@ -28,6 +28,7 @@ db.serialize(() => {
     name TEXT NOT NULL,
     description TEXT,
     type TEXT DEFAULT 'text',
+    password TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 

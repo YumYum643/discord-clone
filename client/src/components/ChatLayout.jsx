@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { socket } from '../lib/socket';
-import { Plus, Hash, LogOut, X, MessageSquare } from 'lucide-react';
+import { Plus, Hash, LogOut, X, MessageSquare, Settings, Lock } from 'lucide-react';
 import clsx from 'clsx';
 
 export default function ChatLayout({ user, onLogout }) {
@@ -9,8 +9,19 @@ export default function ChatLayout({ user, onLogout }) {
     const [channels, setChannels] = useState([]);
     const [users, setUsers] = useState([]);
     const [activeChannel, setActiveChannel] = useState(null);
+
+    // Modals
     const [isCreateChannelOpen, setIsCreateChannelOpen] = useState(false);
+    const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+
+    // Form States
     const [newChannelName, setNewChannelName] = useState('');
+    const [newChannelPassword, setNewChannelPassword] = useState('');
+    const [channelPasswordInput, setChannelPasswordInput] = useState('');
+    const [pendingChannel, setPendingChannel] = useState(null);
+    const [avatarUrl, setAvatarUrl] = useState(user.avatar_url);
+
     const messagesEndRef = useRef(null);
 
     const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
@@ -25,7 +36,9 @@ export default function ChatLayout({ user, onLogout }) {
                     const data = await resChannels.json();
                     setChannels(data);
                     if (data.length > 0 && !activeChannel) {
-                        setActiveChannel(data[0]);
+                        // Find first accessible channel
+                        const firstAccessible = data.find(c => !c.has_password);
+                        if (firstAccessible) setActiveChannel(firstAccessible);
                     }
                 }
 
@@ -70,7 +83,6 @@ export default function ChatLayout({ user, onLogout }) {
 
         socket.on('receive_message', (message) => {
             setMessages((prev) => {
-                // Only add if it belongs to current channel
                 if (message.channel_id === activeChannel?.id) {
                     return [...prev, message];
                 }
@@ -114,7 +126,8 @@ export default function ChatLayout({ user, onLogout }) {
                 body: JSON.stringify({
                     name: newChannelName,
                     type: 'text',
-                    description: 'New Text Channel'
+                    description: 'New Text Channel',
+                    password: newChannelPassword // Optional password
                 })
             });
 
@@ -124,26 +137,77 @@ export default function ChatLayout({ user, onLogout }) {
                 setActiveChannel(newChannel);
                 setIsCreateChannelOpen(false);
                 setNewChannelName('');
+                setNewChannelPassword('');
             }
         } catch (error) {
             console.error("Failed to create channel", error);
         }
     };
 
-    const handleCreateDM = async (targetUser) => {
-        if (targetUser.id === user.id) return; // Don't DM yourself
+    const handleChannelClick = (channel) => {
+        if (channel.has_password && activeChannel?.id !== channel.id) {
+            setPendingChannel(channel);
+            setChannelPasswordInput('');
+            setIsPasswordModalOpen(true);
+        } else {
+            setActiveChannel(channel);
+        }
+    };
 
-        // Check if DM already exists
-        // Note: This is a simple check. In a real app, we'd query the backend more robustly.
-        // Here we assume if we have a private channel with this name (or logic), it's the one.
-        // For simplicity, we'll just create/find by attempting to create.
+    const handlePasswordSubmit = async (e) => {
+        e.preventDefault();
+        if (!pendingChannel) return;
+
+        try {
+            const res = await fetch(`${API_URL}/api/channels/${pendingChannel.id}/verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: channelPasswordInput })
+            });
+
+            if (res.ok) {
+                setActiveChannel(pendingChannel);
+                setIsPasswordModalOpen(false);
+                setPendingChannel(null);
+                setChannelPasswordInput('');
+            } else {
+                alert("Incorrect Password");
+            }
+        } catch (error) {
+            console.error("Password verification failed", error);
+        }
+    };
+
+    const handleUpdateProfile = async (e) => {
+        e.preventDefault();
+        try {
+            const res = await fetch(`${API_URL}/api/users/profile`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userId: user.id, avatarUrl })
+            });
+
+            if (res.ok) {
+                // Update local user state (would be better to have a global user context updater, but we'll reload for now or just update local ref if passed down)
+                // Since user prop is passed from App, we can't easily update it here without a callback.
+                // For now, we'll just close modal and alert user to refresh.
+                alert("Profile updated! Please refresh to see changes.");
+                setIsProfileOpen(false);
+            }
+        } catch (error) {
+            console.error("Failed to update profile", error);
+        }
+    };
+
+    const handleCreateDM = async (targetUser) => {
+        if (targetUser.id === user.id) return;
 
         try {
             const res = await fetch(`${API_URL}/api/channels`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    name: targetUser.username, // DM name is usually the other person's name
+                    name: targetUser.username,
                     type: 'private',
                     userIds: [user.id, targetUser.id]
                 })
@@ -151,10 +215,6 @@ export default function ChatLayout({ user, onLogout }) {
 
             if (res.ok) {
                 const newChannel = await res.json();
-                // Check if we already have it in list (backend returns existing ID if we handled that, but here we might get duplicates in list if not careful. 
-                // Ideally backend handles "get or create". For now, we just add it.)
-
-                // Simple dedup on frontend
                 if (!channels.find(c => c.id === newChannel.id)) {
                     setChannels([...channels, newChannel]);
                 }
@@ -203,14 +263,15 @@ export default function ChatLayout({ user, onLogout }) {
                             {textChannels.map(channel => (
                                 <div
                                     key={channel.id}
-                                    onClick={() => setActiveChannel(channel)}
+                                    onClick={() => handleChannelClick(channel)}
                                     className={clsx(
                                         "flex items-center px-2 py-1.5 rounded cursor-pointer group",
                                         activeChannel?.id === channel.id ? "bg-discord-active text-white" : "text-discord-muted hover:bg-discord-hover hover:text-discord-text"
                                     )}
                                 >
                                     <Hash size={20} className="mr-1.5 text-discord-muted" />
-                                    <span className="font-medium truncate">{channel.name}</span>
+                                    <span className="font-medium truncate flex-1">{channel.name}</span>
+                                    {channel.has_password && <Lock size={14} className="text-discord-muted" />}
                                 </div>
                             ))}
                         </div>
@@ -243,14 +304,17 @@ export default function ChatLayout({ user, onLogout }) {
 
                 {/* User Bar */}
                 <div className="h-[52px] bg-discord-lighter px-2 flex items-center">
-                    <div className="w-8 h-8 rounded-full bg-discord-primary mr-2 overflow-hidden">
+                    <div className="w-8 h-8 rounded-full bg-discord-primary mr-2 overflow-hidden cursor-pointer hover:opacity-80" onClick={() => setIsProfileOpen(true)}>
                         <img src={user.avatar_url} alt={user.username} className="w-full h-full object-cover" />
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setIsProfileOpen(true)}>
                         <div className="text-sm font-bold text-white truncate">{user.username}</div>
                         <div className="text-xs text-discord-muted truncate">#{user.id.toString().padStart(4, '0')}</div>
                     </div>
                     <div className="flex items-center space-x-1">
+                        <button onClick={() => setIsProfileOpen(true)} className="p-1.5 hover:bg-discord-hover rounded text-discord-muted hover:text-white" title="Settings">
+                            <Settings size={18} />
+                        </button>
                         <button onClick={onLogout} className="p-1.5 hover:bg-discord-hover rounded text-discord-muted hover:text-red-400" title="Logout">
                             <LogOut size={18} />
                         </button>
@@ -269,6 +333,7 @@ export default function ChatLayout({ user, onLogout }) {
                     )}
                     <span className="font-bold text-white mr-2">{activeChannel?.name}</span>
                     <span className="text-discord-muted text-sm truncate">{activeChannel?.description}</span>
+                    {activeChannel?.has_password && <Lock size={16} className="text-discord-muted ml-2" />}
                 </div>
 
                 {/* Messages */}
@@ -363,7 +428,7 @@ export default function ChatLayout({ user, onLogout }) {
                         <p className="text-discord-muted text-sm mb-6">in Discord Clone</p>
 
                         <form onSubmit={handleCreateChannel}>
-                            <div className="mb-6">
+                            <div className="mb-4">
                                 <label className="block text-xs font-bold text-discord-muted uppercase mb-2">Channel Name</label>
                                 <div className="flex items-center bg-discord-lighter rounded p-2">
                                     <Hash size={20} className="text-discord-muted mr-2" />
@@ -374,6 +439,20 @@ export default function ChatLayout({ user, onLogout }) {
                                         placeholder="new-channel"
                                         className="bg-transparent border-none text-discord-text focus:outline-none flex-1"
                                         autoFocus
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="block text-xs font-bold text-discord-muted uppercase mb-2">Password (Optional)</label>
+                                <div className="flex items-center bg-discord-lighter rounded p-2">
+                                    <Lock size={20} className="text-discord-muted mr-2" />
+                                    <input
+                                        type="password"
+                                        value={newChannelPassword}
+                                        onChange={(e) => setNewChannelPassword(e.target.value)}
+                                        placeholder="Leave empty for public"
+                                        className="bg-transparent border-none text-discord-text focus:outline-none flex-1"
                                     />
                                 </div>
                             </div>
@@ -391,6 +470,102 @@ export default function ChatLayout({ user, onLogout }) {
                                     className="px-6 py-2 bg-discord-primary hover:bg-discord-primaryHover text-white rounded font-medium transition-colors"
                                 >
                                     Create Channel
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Profile Settings Modal */}
+            {isProfileOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-discord-light w-full max-w-md rounded p-6 shadow-lg relative">
+                        <button
+                            onClick={() => setIsProfileOpen(false)}
+                            className="absolute top-4 right-4 text-discord-muted hover:text-discord-text"
+                        >
+                            <X size={24} />
+                        </button>
+                        <h2 className="text-xl font-bold text-white mb-6">Profile Settings</h2>
+
+                        <form onSubmit={handleUpdateProfile}>
+                            <div className="mb-6 text-center">
+                                <div className="w-24 h-24 rounded-full bg-discord-primary mx-auto mb-4 overflow-hidden relative group">
+                                    <img src={avatarUrl} alt="Preview" className="w-full h-full object-cover" />
+                                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <span className="text-xs text-white">Preview</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="block text-xs font-bold text-discord-muted uppercase mb-2">Avatar URL</label>
+                                <div className="flex items-center bg-discord-lighter rounded p-2">
+                                    <input
+                                        type="text"
+                                        value={avatarUrl}
+                                        onChange={(e) => setAvatarUrl(e.target.value)}
+                                        placeholder="https://example.com/image.png"
+                                        className="bg-transparent border-none text-discord-text focus:outline-none flex-1"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end bg-discord-lighter -mx-6 -mb-6 p-4 rounded-b">
+                                <button
+                                    type="button"
+                                    onClick={() => setIsProfileOpen(false)}
+                                    className="px-4 py-2 text-white hover:underline mr-4"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-6 py-2 bg-discord-primary hover:bg-discord-primaryHover text-white rounded font-medium transition-colors"
+                                >
+                                    Save Changes
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Password Entry Modal */}
+            {isPasswordModalOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-discord-light w-full max-w-sm rounded p-6 shadow-lg relative">
+                        <button
+                            onClick={() => { setIsPasswordModalOpen(false); setPendingChannel(null); }}
+                            className="absolute top-4 right-4 text-discord-muted hover:text-discord-text"
+                        >
+                            <X size={24} />
+                        </button>
+                        <h2 className="text-xl font-bold text-white mb-2">Locked Channel</h2>
+                        <p className="text-discord-muted text-sm mb-6">Enter password to join #{pendingChannel?.name}</p>
+
+                        <form onSubmit={handlePasswordSubmit}>
+                            <div className="mb-6">
+                                <label className="block text-xs font-bold text-discord-muted uppercase mb-2">Password</label>
+                                <div className="flex items-center bg-discord-lighter rounded p-2">
+                                    <Lock size={20} className="text-discord-muted mr-2" />
+                                    <input
+                                        type="password"
+                                        value={channelPasswordInput}
+                                        onChange={(e) => setChannelPasswordInput(e.target.value)}
+                                        className="bg-transparent border-none text-discord-text focus:outline-none flex-1"
+                                        autoFocus
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end bg-discord-lighter -mx-6 -mb-6 p-4 rounded-b">
+                                <button
+                                    type="submit"
+                                    className="px-6 py-2 bg-discord-primary hover:bg-discord-primaryHover text-white rounded font-medium transition-colors w-full"
+                                >
+                                    Enter Channel
                                 </button>
                             </div>
                         </form>

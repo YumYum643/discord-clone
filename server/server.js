@@ -94,18 +94,24 @@ app.get('/api/channels', (req, res) => {
             res.status(500).json({ error: err.message });
             return;
         }
-        res.json(rows);
+        // Mask password
+        const safeRows = rows.map(row => ({
+            ...row,
+            has_password: !!row.password,
+            password: undefined // Remove actual password
+        }));
+        res.json(safeRows);
     });
 });
 
 // API to create a channel
 app.post('/api/channels', (req, res) => {
-    const { name, type, description, userIds } = req.body;
+    const { name, type, description, userIds, password } = req.body;
     // userIds is an array of user IDs to add to the channel (creator + others)
 
     const channelType = type || 'text';
 
-    db.run("INSERT INTO channels (name, description, type) VALUES (?, ?, ?)", [name, description, channelType], function (err) {
+    db.run("INSERT INTO channels (name, description, type, password) VALUES (?, ?, ?, ?)", [name, description, channelType, password], function (err) {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
@@ -127,7 +133,43 @@ app.post('/api/channels', (req, res) => {
             });
         }
 
-        res.json({ id: channelId, name, description, type: channelType });
+        res.json({ id: channelId, name, description, type: channelType, has_password: !!password });
+    });
+});
+
+// API to verify channel password
+app.post('/api/channels/:id/verify', (req, res) => {
+    const channelId = req.params.id;
+    const { password } = req.body;
+
+    db.get("SELECT password FROM channels WHERE id = ?", [channelId], (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (!row) {
+            res.status(404).json({ error: "Channel not found" });
+            return;
+        }
+
+        if (row.password === password) {
+            res.json({ success: true });
+        } else {
+            res.status(401).json({ error: "Incorrect password" });
+        }
+    });
+});
+
+// API to update user profile
+app.put('/api/users/profile', (req, res) => {
+    const { userId, avatarUrl } = req.body;
+
+    db.run("UPDATE users SET avatar_url = ? WHERE id = ?", [avatarUrl, userId], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json({ success: true, avatar_url: avatarUrl });
     });
 });
 
