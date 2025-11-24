@@ -11,44 +11,64 @@ const app = express();
 const server = http.createServer(app);
 
 const corsOrigin = process.env.CORS_ORIGIN || '*';
-app.use(cors({ origin: corsOrigin }));
+
+app.use(cors({
+    origin: corsOrigin,
+    methods: ["GET", "POST"]
+}));
 app.use(express.json());
-socket.join(channelId);
-console.log(`User ${socket.id} joined channel ${channelId}`);
-    });
 
-socket.on('send_message', (data) => {
-    // data: { channelId, userId, content, username, avatar }
-    const { channelId, userId, content } = data;
+// Routes
+app.use('/api/auth', authRoutes);
 
-    // Save to DB
-    const stmt = db.prepare("INSERT INTO messages (channel_id, user_id, content) VALUES (?, ?, ?)");
-    stmt.run(channelId, userId, content, function (err) {
-        if (err) {
-            console.error("Error saving message:", err);
-            return;
-        }
-
-        const messageId = this.lastID;
-        const messageToSend = {
-            id: messageId,
-            channel_id: channelId,
-            user_id: userId,
-            content: content,
-            username: data.username, // Pass through for immediate UI update
-            avatar_url: data.avatar_url,
-            created_at: new Date().toISOString()
-        };
-
-        // Broadcast to channel
-        io.to(channelId).emit('receive_message', messageToSend);
-    });
-    stmt.finalize();
+// Socket.io setup
+const io = new Server(server, {
+    cors: {
+        origin: corsOrigin,
+        methods: ["GET", "POST"]
+    }
 });
 
-socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-});
+io.on('connection', (socket) => {
+    console.log('User connected:', socket.id);
+
+    socket.on('join_channel', (channelId) => {
+        socket.join(channelId);
+        console.log(`User ${socket.id} joined channel ${channelId}`);
+    });
+
+    socket.on('send_message', (data) => {
+        // data: { channelId, userId, content, username, avatar }
+        const { channelId, userId, content } = data;
+
+        // Save to DB
+        const stmt = db.prepare("INSERT INTO messages (channel_id, user_id, content) VALUES (?, ?, ?)");
+        stmt.run(channelId, userId, content, function (err) {
+            if (err) {
+                console.error("Error saving message:", err);
+                return;
+            }
+
+            const messageId = this.lastID;
+            const messageToSend = {
+                id: messageId,
+                channel_id: channelId,
+                user_id: userId,
+                content: content,
+                username: data.username, // Pass through for immediate UI update
+                avatar_url: data.avatar_url,
+                created_at: new Date().toISOString()
+            };
+
+            // Broadcast to channel
+            io.to(channelId).emit('receive_message', messageToSend);
+        });
+        stmt.finalize();
+    });
+
+    socket.on('disconnect', () => {
+        console.log('User disconnected:', socket.id);
+    });
 });
 
 // API to get channels
