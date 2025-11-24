@@ -4,16 +4,16 @@ const path = require('path');
 const dbPath = path.resolve(__dirname, 'discord.db');
 
 const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.error('Error opening database ' + dbPath + ': ' + err.message);
-    } else {
-        console.log('Connected to the SQLite database.');
-    }
+  if (err) {
+    console.error('Error opening database ' + dbPath + ': ' + err.message);
+  } else {
+    console.log('Connected to the SQLite database.');
+  }
 });
 
 db.serialize(() => {
-    // Users table
-    db.run(`CREATE TABLE IF NOT EXISTS users (
+  // Users table
+  db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE NOT NULL,
@@ -22,8 +22,8 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-    // Channels table
-    db.run(`CREATE TABLE IF NOT EXISTS channels (
+  // Channels table
+  db.run(`CREATE TABLE IF NOT EXISTS channels (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT,
@@ -31,25 +31,34 @@ db.serialize(() => {
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
-    // Messages table
-    db.run(`CREATE TABLE IF NOT EXISTS messages (
+  // Messages table
+  db.run(`CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     channel_id INTEGER NOT NULL,
     user_id INTEGER NOT NULL,
     content TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users (id)
+  )`);
+
+  // Channel Participants table (for DMs)
+  db.run(`CREATE TABLE IF NOT EXISTS channel_participants (
+    channel_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (channel_id, user_id),
     FOREIGN KEY (channel_id) REFERENCES channels (id),
     FOREIGN KEY (user_id) REFERENCES users (id)
   )`);
 
-    // Seed default channels if empty
-    db.get("SELECT count(*) as count FROM channels", (err, row) => {
-        if (row.count === 0) {
-            db.run(`INSERT INTO channels (name, description) VALUES ('general', 'General discussion')`);
-            db.run(`INSERT INTO channels (name, description) VALUES ('random', 'Random chatter')`);
-            console.log("Seeded default channels.");
-        }
-    });
+  // Seed default channels if empty
+  db.get("SELECT count(*) as count FROM channels", (err, row) => {
+    if (row.count === 0) {
+      db.run(`INSERT INTO channels (name, description) VALUES ('general', 'General discussion')`);
+      db.run(`INSERT INTO channels (name, description) VALUES ('random', 'Random chatter')`);
+      console.log("Seeded default channels.");
+    }
+  });
 });
 
 module.exports = db;

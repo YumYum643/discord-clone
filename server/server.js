@@ -71,9 +71,69 @@ io.on('connection', (socket) => {
     });
 });
 
-// API to get channels
+// API to get channels (Public + Private for user)
 app.get('/api/channels', (req, res) => {
-    db.all("SELECT * FROM channels", [], (err, rows) => {
+    const userId = req.query.userId; // We need to know who is asking
+
+    let sql = `
+    SELECT DISTINCT c.* 
+    FROM channels c
+    LEFT JOIN channel_participants cp ON c.id = cp.channel_id
+    WHERE c.type = 'text' 
+       OR (c.type = 'private' AND cp.user_id = ?)
+  `;
+
+    // If no userId provided, just return public channels (fallback)
+    const params = userId ? [userId] : [];
+    if (!userId) {
+        sql = "SELECT * FROM channels WHERE type = 'text'";
+    }
+
+    db.all(sql, params, (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        res.json(rows);
+    });
+});
+
+// API to create a channel
+app.post('/api/channels', (req, res) => {
+    const { name, type, description, userIds } = req.body;
+    // userIds is an array of user IDs to add to the channel (creator + others)
+
+    const channelType = type || 'text';
+
+    db.run("INSERT INTO channels (name, description, type) VALUES (?, ?, ?)", [name, description, channelType], function (err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        const channelId = this.lastID;
+
+        // If private, add participants
+        if (channelType === 'private' && userIds && userIds.length > 0) {
+            const placeholders = userIds.map(() => '(?, ?)').join(',');
+            const values = [];
+            userIds.forEach(uid => {
+                values.push(channelId, uid);
+            });
+
+            db.run(`INSERT INTO channel_participants (channel_id, user_id) VALUES ${placeholders}`, values, (err) => {
+                if (err) {
+                    console.error("Error adding participants:", err);
+                }
+            });
+        }
+
+        res.json({ id: channelId, name, description, type: channelType });
+    });
+});
+
+// API to get all users
+app.get('/api/users', (req, res) => {
+    db.all("SELECT id, username, avatar_url FROM users", [], (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
